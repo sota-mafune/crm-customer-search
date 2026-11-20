@@ -1,0 +1,82 @@
+/* 顧客検索ウィジェット。幅 700px 以上は1行＝1人の表、未満はカード */
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body {
+    font-family: "Meiryo", "Hiragino Sans", "Noto Sans JP", sans-serif;
+    font-size: 16px; line-height: 1.5; color: #222; background: #f3f5f8; padding-bottom: 40px;
+}
+.view { max-width: 1400px; margin: 0 auto; padding: 0 12px; }
+#view-message { padding-top: 40px; }
+#view-message h1 { font-size: 22px; color: #1f3864; }
+#view-message p { font-size: 17px; }
+
+.bar {
+    background: #1f3864; color: #fff; margin: 0 -12px; padding: 10px 14px;
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+}
+.bar-title { font-size: 20px; font-weight: bold; }
+.bar-hint { font-size: 14px; opacity: .92; }
+
+/* 入力欄 */
+.form {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 14px;
+    background: #fff; border: 1px solid #d5dbe3; border-radius: 8px; padding: 12px 14px; margin-top: 12px;
+}
+.f { display: flex; flex-direction: column; font-size: 14px; color: #1f3864; font-weight: bold; min-width: 0; }
+.f input {
+    margin-top: 4px; font-size: 16px; padding: 7px 9px; border: 1px solid #9aa5b5; border-radius: 6px; width: 100%;
+    font-weight: normal; color: #222;
+}
+.f input:focus { outline: 2px solid #4a7bd0; border-color: #4a7bd0; }
+.actions { grid-column: 1 / -1; display: flex; gap: 10px; }
+.btn-main, .btn-sub { font-size: 16px; padding: 8px 22px; border-radius: 6px; cursor: pointer; }
+.btn-main { background: #1f3864; color: #fff; border: 1px solid #1f3864; font-weight: bold; }
+.btn-main:disabled { opacity: .55; cursor: default; }
+.btn-sub { background: #fff; color: #1f3864; border: 1px solid #1f3864; }
+
+.notice { margin: 10px 0; padding: 12px 14px; border-radius: 6px; font-size: 15px; }
+.notice-error { background: #fdecea; border: 1px solid #c0392b; color: #8e1b10; }
+.notice-warn { background: #fff6e0; border: 1px solid #d39e00; color: #6b4d00; }
+.status { margin: 10px 2px 6px; font-size: 15px; color: #444; min-height: 1.5em; }
+.empty { background: #fff; border: 1px dashed #9aa5b5; border-radius: 8px; padding: 18px; text-align: center; color: #555; }
+
+/* 結果: 1行＝お客様1人 */
+.results { display: flex; flex-direction: column; gap: 6px; }
+.row {
+    display: grid; grid-template-columns: 130px minmax(160px, 1.3fr) 110px minmax(130px, 1fr) minmax(220px, 2fr);
+    gap: 10px; align-items: start; background: #fff; border: 1px solid #d5dbe3; border-radius: 8px;
+    padding: 9px 12px; color: inherit; text-decoration: none;
+}
+a.row:hover { border-color: #4a7bd0; background: #f5f8ff; }
+a.row:focus { outline: 2px solid #4a7bd0; }
+.row-head { background: transparent; border: none; padding: 0 12px; font-size: 13px; color: #555; font-weight: bold; }
+.row > span { min-width: 0; overflow-wrap: anywhere; }
+.c-name b { display: block; font-size: 17px; color: #1f3864; }
+.c-name small { display: block; color: #555; font-size: 14px; }
+.c-no .lbl { display: none; }
+.c-phone .phone, .c-cars .car { display: block; }
+.phone.hit, .car.hit { font-weight: bold; background: #fff3c4; border-radius: 4px; padding: 0 4px; margin-left: -4px; }
+.plate { color: #555; white-space: nowrap; }
+.more { display: block; font-size: 13px; color: #666; }
+.none { color: #999; }
+
+.badge { display: inline-block; font-size: 13px; padding: 1px 8px; border-radius: 10px; margin: 0 4px 4px 0; background: #e0e8f6; color: #1f3864; border: 1px solid #9fb4d8; white-space: nowrap; }
+.b-phone, .b-no { background: #e3f4e5; border-color: #8cc79a; color: #1b5e20; }
+.b-plate, .b-vin { background: #fdeede; border-color: #e3a86a; color: #7a3d00; }
+
+@media (max-width: 699px) {
+    .form { grid-template-columns: 1fr; }
+    .row-head { display: none; }
+    .row { grid-template-columns: 1fr; gap: 4px; }
+    .c-no .lbl { display: inline; color: #666; margin-right: 6px; font-weight: normal; }
+    .c-hits { order: -1; }
+}
+
+.env-badge {
+    position: fixed; right: 6px; top: 4px; z-index: 30; font-size: 12px; padding: 1px 8px; border-radius: 10px;
+    opacity: .9; pointer-events: none;
+}
+.env-sandbox { background: #ffe08a; color: #5a4300; border: 1px solid #c9a300; }
+.env-prod { background: #e0e4ea; color: #333; border: 1px solid #9aa5b5; }
+.env-unknown { background: #fff; color: #888; border: 1px dashed #aaa; }

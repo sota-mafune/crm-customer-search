@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>顧客検索</title>
+    <!-- 版を変えたら ?v= を変える（GitHub Pages は index.html を最大10分キャッシュする） -->
+    <link rel="stylesheet" href="./css/style.css?v=20261120b">
+    <script src="https://live.zwidgets.com/js-sdk/1.2/ZohoEmbededAppSDK.min.js"></script>
+</head>
+<body>
+    <div id="view-message" class="view">
+        <h1 id="message-title">読み込んでいます…</h1>
+        <p id="message-body"></p>
+    </div>
+
+    <div id="view-search" class="view" hidden>
+        <header class="bar">
+            <div class="bar-title">顧客検索</div>
+            <div class="bar-hint">入れた欄の<b>どれか</b>に当たったお客様を出します（空の欄は使いません）。Enter で検索</div>
+        </header>
+        <form id="search-form" class="form" autocomplete="off" novalidate>
+            <label class="f">氏名<input type="text" id="q-name" maxlength="60" placeholder="例: 山田 太郎（姓だけでも可）"></label>
+            <label class="f">フリガナ<input type="text" id="q-kana" maxlength="60" placeholder="例: ヤマダ タロウ（ひらがなでも可）"></label>
+            <label class="f">電話番号<input type="text" id="q-phone" maxlength="30" inputmode="tel" placeholder="例: 090-1234-5678"></label>
+            <label class="f">顧客ＮＯ<input type="text" id="q-no" maxlength="20" inputmode="numeric" placeholder="例: 123456"></label>
+            <label class="f">ナンバー（登録番号）<input type="text" id="q-plate" maxlength="30" placeholder="例: 1234 か 練馬500あ1234"></label>
+            <label class="f">車台番号<input type="text" id="q-vin" maxlength="30" placeholder="例: ZVW30-1234567 か 1234567"></label>
+            <div class="actions">
+                <button type="submit" id="search-btn" class="btn-main">検索</button>
+                <button type="button" id="clear-btn" class="btn-sub">クリア</button>
+            </div>
+        </form>
+        <div id="notice" class="notice" hidden></div>
+        <div id="status" class="status"></div>
+        <div id="results" class="results"></div>
+    </div>
+
+    <div id="env-badge" class="env-badge" hidden></div>
+
+    <script src="./js/config.js?v=20261120b"></script>
+    <script src="./js/app.js?v=20261120b"></script>
+</body>
+</html>
