@@ -12,6 +12,7 @@
  * 車両で当たったら、参照先の連絡先の id を集めて id in (50 個ずつ) で読む。出すお客様の「持っている車」も 50 人ずつまとめて読む。
  * 「車 N 台 ▼」を開くと、その「持っている車」を関連リストに似た表で出す（列は config の carTable。同じ1本で読んだものを使い、開いたときに読み直さない）。
  * 削除日（config の deletedField）の入った車は、車両の COQL の where に「削除日 is null」を足して外し、読んだ後に手元でも外す。
+ *   text の項目（deletedType: "text"）は where に足さず、select で読んで手元だけで外す（空白だけの値は「入っていない」として残す）。
  *   ナンバー・車台番号の当たりにも、持っている車・車の数にも、紐づいていない車の台数にも数えない。
  *
  * 項目の対応は js/config.js（CUSTOMER_SEARCH_CONFIG）だけに書く。秘密情報・組織の id はここに書かない（実行時に SDK で読む）。
@@ -303,10 +304,25 @@
         return cols;
     }
     // 削除日の入った車か（読んだ後の手元の守り。COQL の is null が効かなくても外す）。
-    // 関数（現在の車を選ぶもの）と同じく「値が無い（null）」なら残す。空の文字も残す
-    function isDeleted(v, row) { return !!v.deletedField && str(row[v.deletedField]) !== ""; }
-    // where に「削除日が空」を足す（2つずつ括弧で入れ子）
-    function aliveWhere(v, where) { return nest([where, v.deletedField + " is null"], "and"); }
+    // date（既定）: 関数（現在の車を選ぶもの）と同じく「値が無い（null）」なら残す。空の文字も残す。
+    // text（deletedType: "text"、JUMPS の管理停止日）: 関数の ifNull(値,"").toString().trim() == "" と同じく、
+    //   null・空の文字・前後の空白を除いて空なら残し、それ以外（"-None-" も）は外す。
+    //   trim は Deluge（Java の String.trim と同じ扱いとみなす）に合わせ、U+0020 以下の文字だけを除く（全角空白は除かない）
+    function textFilled(val) {
+        if (val === null || val === undefined) return false;
+        return String(val).replace(/^[\u0000- ]+|[\u0000- ]+$/g, "") !== "";
+    }
+    function isDeleted(v, row) {
+        if (!v.deletedField) return false;
+        if (v.deletedType === "text") return textFilled(row[v.deletedField]);
+        return str(row[v.deletedField]) !== "";
+    }
+    // where に「削除日が空」を足す（2つずつ括弧で入れ子）。text の項目は足さない（is null では空白だけの値を外してしまい、関数と食い違うため。
+    // select で読んで手元だけで外す）
+    function aliveWhere(v, where) {
+        if (v.deletedType === "text") return where;
+        return nest([where, v.deletedField + " is null"], "and");
+    }
     function hasCarExtras(v) {
         var base = vehicleSelect(v), cf = v.carFields || {};
         return Object.keys(cf).some(function (k) { return cf[k] && base.indexOf(cf[k]) === -1; });
@@ -608,8 +624,9 @@
         // 削除日の項目を CRM が受け付けなかった車両（この画面を開いている間は毎回知らせる）
         CFG.vehicles.forEach(function (v) {
             if (!state.badDeleted[v.key]) return;
-            warn.push("CRM が「" + (v.deletedLabel || v.deletedField) + "」の項目（" + v.label + "）を受け付けなかったため、" +
-                v.label + "の車は削除日の入ったものも外さずに出しています（" + state.badDeleted[v.key] + "）。");
+            var dl = v.deletedLabel || v.deletedField;
+            warn.push("CRM が「" + dl + "」の項目（" + v.label + "）を受け付けなかったため、" +
+                v.label + "の車は" + dl + "の入ったものも外さずに出しています（" + state.badDeleted[v.key] + "）。");
         });
 
         list.sort(function (a, b) {

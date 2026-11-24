@@ -38,7 +38,8 @@ var CUSTOMER_SEARCH_CONFIG = {
             plateNumber: "field17",      // 登録番号４桁（数字 1〜4 桁、ゼロ埋めなし）
             platePad: false,
             vinField: "field70",         // 車台番号
-            // 削除日（date）。値の入った車は、持っている車・車の数・ナンバーと車台番号の当たりから外す。無い車両には書かない
+            // 削除日（date）。値の入った車は、持っている車・車の数・ナンバーと車台番号の当たりから外す。無い車両には書かない。
+            // deletedType を書かなければ date の扱い（where に is null を足し、読んだ後も手元で外す）
             deletedField: "field68",
             deletedLabel: "車両削除日",
             // 車の表（carTable）の列に使う項目。区分・登録番号は組み立てるので書かない。無い列は空欄
@@ -55,6 +56,11 @@ var CUSTOMER_SEARCH_CONFIG = {
             plateNumber: "field118",
             platePad: true,              // 一連番号に4桁のゼロ埋め（例 0123）が少しあるので、両方の形で探す
             vinField: "field56",
+            // 管理停止日（text）。値の入った車は一等書記官の削除日と同じく外す。
+            // text なので where には足さず（空白だけの値を「入っていない」と扱うため）、select で読んで手元だけで外す
+            deletedField: "field196",
+            deletedLabel: "管理停止日",
+            deletedType: "text",
             carFields: { name: "Name", vin: "field56", first: "field55", shaken: "field82" }   // 初度登録・車検満了日
         }
     ],
