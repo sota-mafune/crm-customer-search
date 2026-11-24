@@ -708,7 +708,8 @@
         $("q-name").focus();
     }
 
-    // 組織の情報: sandbox か本番か（右上の表示）と、連絡先を新しいタブで開く URL（{CRM の入口}/crm/{組織の domain_name}/tab/Contacts/{id}）
+    // 組織の情報: sandbox か（右上の表示）と、連絡先を新しいタブで開く URL（{CRM の入口}/crm/{組織の domain_name}/tab/Contacts/{id}）
+    // 右上の表示は sandbox と判断できたときだけ出す。本番・判断できないときは出さない（2026-11-24）
     async function readOrg() {
         var type = "", domain = "";
         try {
@@ -721,15 +722,16 @@
         var parent = "";
         try { parent = (window.location.ancestorOrigins && window.location.ancestorOrigins.length) ? window.location.ancestorOrigins[0] : ""; } catch (e) { parent = ""; }
         if (!parent) { try { parent = document.referrer ? new URL(document.referrer).origin : ""; } catch (e) { parent = ""; } }
-        if (!type) {
-            if (/sandbox/i.test(parent)) type = "sandbox";
-            else if (/zoho\./i.test(parent)) type = "production?";
-        }
-        var label = type === "sandbox" ? "sandbox" : type === "production" ? "本番" : type === "production?" ? "本番?" : "環境不明";
+        if (!type && /sandbox/i.test(parent)) type = "sandbox";
         var el = $("env-badge");
-        el.textContent = label;
-        el.className = "env-badge " + (type === "sandbox" ? "env-sandbox" : (label === "環境不明" ? "env-unknown" : "env-prod"));
-        el.hidden = false;
+        if (type === "sandbox") {
+            el.textContent = "sandbox";
+            el.className = "env-badge env-sandbox";
+            el.hidden = false;
+        } else {
+            el.textContent = "";
+            el.hidden = true;
+        }
         // CRM の入口は親の画面（crm.zoho.com / crmplus.zoho.com / sandbox など）。読めなければ config の既定
         // ホスト名が zoho.{com,jp,...} そのものか、そのサブドメイン（crm.zoho.com・crmplus.zoho.com・crmsandbox.zoho.com など）のときだけ使う
         var origin = /^https:\/\/([a-z0-9-]+\.)*zoho\.(com|jp|eu|in|com\.au|com\.cn|ca|sa)$/i.test(parent) ? parent : CFG.crmOrigin;
