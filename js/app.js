@@ -10,6 +10,7 @@
  *   ナンバー … 末尾の一連番号（数字 1〜4 桁）で車両を = / in で引き、地名などが入っていれば手元で後ろ一致を確かめる
  *   車台番号 … like '%語%'（末尾の数字 6 桁など）→ ハイフンを除いて手元で確かめる
  * 車両で当たったら、参照先の連絡先の id を集めて id in (50 個ずつ) で読む。出すお客様の「持っている車」も 50 人ずつまとめて読む。
+ * 「車 N 台 ▼」を開くと、その「持っている車」を関連リストに似た表で出す（列は config の carTable。同じ1本で読んだものを使い、開いたときに読み直さない）。
  *
  * 項目の対応は js/config.js（CUSTOMER_SEARCH_CONFIG）だけに書く。秘密情報・組織の id はここに書かない（実行時に SDK で読む）。
  */
@@ -28,6 +29,8 @@
     var state = {
         user: null,
         recordBase: "",             // 連絡先を新しいタブで開く URL の頭（https://.../crm/{組織}/tab/Contacts/）。読めなければ ""
+        tabBase: "",                // レコードを新しいタブで開く URL の頭（https://.../crm/{組織}/tab/）。車両にも使う。読めなければ ""
+        badCarCols: {},             // 車の表の列の項目を COQL が断った車両（key → true）。以後その車両は列の項目を読まない
         nameField: null,            // 氏名の部分一致に使えた項目（一度通ったら覚える）
         badNameFields: {},          // COQL が断った氏名の項目
         badPhoneFields: {},         // COQL が断った電話の項目
@@ -288,6 +291,46 @@
         if (cols.indexOf(v.plateNumber) === -1) cols.push(v.plateNumber);
         return cols;
     }
+    // 持っている車を読むときの select（探すときの項目＋車の表の列の項目）。同じ1本で取る（開いたときに読み直さない）
+    function carSelect(v) {
+        var cols = vehicleSelect(v), cf = v.carFields || {};
+        if (state.badCarCols[v.key]) return cols;
+        Object.keys(cf).forEach(function (k) { if (cf[k] && cols.indexOf(cf[k]) === -1) cols.push(cf[k]); });
+        return cols;
+    }
+    function hasCarExtras(v) {
+        var base = vehicleSelect(v), cf = v.carFields || {};
+        return Object.keys(cf).some(function (k) { return cf[k] && base.indexOf(cf[k]) === -1; });
+    }
+    function carTable() { return CFG.carTable || { columns: [], sortDate: "" }; }
+    // 日付は YYYY/MM/DD（CRM の date は YYYY-MM-DD で返る。日時なら日付の部分だけ）
+    function fmtDate(s) {
+        var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+        return m ? m[1] + "/" + m[2] + "/" + m[3] : s;
+    }
+    function todayIso() {
+        var d = new Date();
+        return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2);
+    }
+    // 日付の近さ: 今日以降は早い順 → 過ぎたものは新しい順 → 空。[組, 比べる文字]
+    function dateRank(s, today) {
+        var m = /^(\d{4}-\d{2}-\d{2})/.exec(s || "");
+        if (!m) return [2, ""];
+        return m[1] >= today ? [0, m[1]] : [1, m[1]];
+    }
+    function byCarTable(today) {
+        var dk = carTable().sortDate, order = {};
+        CFG.vehicles.forEach(function (v, i) { order[v.key] = i; });
+        return function (a, b) {
+            if (a.hit !== b.hit) return a.hit ? -1 : 1;
+            if (dk) {
+                var ra = dateRank(a.vals[dk], today), rb = dateRank(b.vals[dk], today);
+                if (ra[0] !== rb[0]) return ra[0] - rb[0];
+                if (ra[1] !== rb[1]) return (ra[1] < rb[1] ? -1 : 1) * (ra[0] === 1 ? -1 : 1);
+            }
+            return (order[a.srcKey] - order[b.srcKey]) || byJa(a.name, b.name);
+        };
+    }
     function contactName(r) {
         var c = C(), v = str(r[c.nameField]);
         if (!v) c.nameFields.forEach(function (f) { if (!v) v = str(r[f]); });
@@ -519,7 +562,7 @@
         // 持っている車（出すお客様だけ。モジュールごとに 50 人ずつ）
         var carsOk = true;
         if (list.length) {
-            try { await readCars(list); } catch (eCars) {
+            try { await readCars(list, warn); } catch (eCars) {
                 carsOk = false;
                 warn.push("持っている車を読めませんでした（" + errText(eCars) + "）。お客様の一覧だけ出しています。");
             }
@@ -533,29 +576,51 @@
         return { list: list, total: total, over: over, warn: warn, carsOk: carsOk, crit: crit };
     }
 
-    async function readCars(list) {
+    // 持っている車を読む（モジュールごと・50 人ずつ1本）。車の表の列の項目も同じ1本で取る。
+    // 列の項目を CRM が断ったら（恒久的なエラー）、探すときの項目だけでその1本を流し直し、以後その車両の列は空欄にする
+    async function readCars(list, warn) {
         var ids = list.map(function (p) { return p.id; }), byId = {};
-        list.forEach(function (p) { p.cars = []; byId[p.id] = p; });
-        var tasks = [], truncated = [];
+        list.forEach(function (p) { p.cars = []; p.carsTruncated = []; byId[p.id] = p; });
+        var tasks = [], dropped = {};
         CFG.vehicles.forEach(function (v) {
             chunks(ids, CFG.inMax).forEach(function (part) {
                 tasks.push(async function () {
-                    var r = await coqlPaged(vehicleSelect(v), v.module, "(" + v.contactField + " in " + inList(part) + ")", CFG.carScanMax);
-                    if (r.more) truncated.push(v.label);
+                    var where = "(" + v.contactField + " in " + inList(part) + ")", r;
+                    // 出発時に列つきの select を使ったか（同じ車両の塊が同時に走り、先の1本が badCarCols を立てても、この1本は自分で流し直す）
+                    var usedExtras = !state.badCarCols[v.key] && hasCarExtras(v);
+                    try {
+                        r = await coqlPaged(usedExtras ? carSelect(v) : vehicleSelect(v), v.module, where, CFG.carScanMax);
+                    } catch (e) {
+                        if (!isPermanent(e) || !usedExtras) throw e;
+                        try { r = await coqlPaged(vehicleSelect(v), v.module, where, CFG.carScanMax); } catch (e2) { throw e; }
+                        state.badCarCols[v.key] = true;
+                        dropped[v.label] = errText(e);
+                    }
+                    if (r.more) part.forEach(function (id) { var p = byId[id]; if (p && p.carsTruncated.indexOf(v.label) === -1) p.carsTruncated.push(v.label); });
+                    var cf = v.carFields || {};
                     r.rows.forEach(function (row) {
                         var p = byId[idOnly(row[v.contactField])];
                         if (!p) return;
-                        var key = v.key + ":" + idOnly(row.id);
-                        p.cars.push({ name: str(row[v.nameField]), plate: platePartsText(v, row), src: v.label, hit: !!p.carHits[key] });
+                        var rid = idOnly(row.id), key = v.key + ":" + rid, vals = {};
+                        Object.keys(cf).forEach(function (k) { vals[k] = cf[k] ? str(row[cf[k]]) : ""; });
+                        vals.src = v.label;
+                        vals.plate = platePartsText(v, row);
+                        p.cars.push({ id: rid, module: v.module, srcKey: v.key, name: str(row[v.nameField]), plate: vals.plate, src: v.label,
+                            hit: !!p.carHits[key], vals: vals });
                     });
                 });
             });
         });
         await pool(tasks);
+        Object.keys(dropped).forEach(function (lb) {
+            warn.push("CRM が車の表の一部の項目（" + lb + "）を受け付けなかったため、その車の列の一部を空欄にしています（" + dropped[lb] + "）。");
+        });
+        var sortTable = byCarTable(todayIso());
         list.forEach(function (p) {
-            // 当たった車を先に。同じ車が両方のモジュールにあれば両方出す（どちらの写しかは小さく出す）
+            // 短い並び: 当たった車を先に。同じ車が両方のモジュールにあれば両方出す（どちらの写しかは小さく出す）
             p.cars.sort(function (a, b) { return (b.hit ? 1 : 0) - (a.hit ? 1 : 0) || byJa(a.name, b.name); });
-            p.carsTruncated = truncated.length > 0;
+            // 車の表: 当たった車 → 車検満了日の近い順（sortDate）→ 区分 → 車名
+            p.carTable = p.cars.slice().sort(sortTable);
         });
     }
 
@@ -643,19 +708,62 @@
                 }).join("");
                 if (p.cars.length > CARS_SHOWN) cars += "<span class='more'>ほか " + (p.cars.length - CARS_SHOWN) + " 台</span>";
                 if (!p.cars.length) cars = "<span class='none'>なし</span>";
-                if (p.carsTruncated) cars += "<span class='more'>（一部のみ）</span>";
+                if (p.carsTruncated && p.carsTruncated.length) cars += "<span class='more'>（一部のみ）</span>";
             } else cars = "<span class='none'>—</span>";
             var href = state.recordBase ? state.recordBase + encodeURIComponent(p.id) : "";
-            h += (href ? "<a class='row' href='" + esc(href) + "' target='_blank' rel='noopener'" : "<a class='row' href='#' data-open='" + esc(p.id) + "'") +
+            h += "<div class='person'>";
+            h += (href ? "<a class='row' href='" + esc(href) + "' target='_blank' rel='noopener'" : "<a class='row' href='#' data-open='" + esc(p.id) + "' data-entity='" + esc(c.module) + "'") +
                 " title='この連絡先を開く'>" +
                 "<span class='c-hits'>" + badges + "</span>" +
                 "<span class='c-name'><b>" + esc(contactName(r) || "（氏名なし）") + "</b><small>" + esc(str(r[c.kanaField])) + "</small></span>" +
                 "<span class='c-no'><small class='lbl'>顧客ＮＯ</small>" + esc(str(r[c.noField])) + "</span>" +
                 "<span class='c-phone'>" + (phones.join("") || "<span class='none'>なし</span>") + "</span>" +
                 "<span class='c-cars'>" + cars + "</span>" +
-                "</a>";
+                "</a>" + carPanel(p) + "</div>";
         });
         $("results").innerHTML = h;
+    }
+
+    // 「車 N 台 ▼」の開閉と、開くと出る車の表（連絡先の関連リストに似せる。1行＝車1台。初めは閉じておく）
+    var panelSeq = 0;
+    function carPanel(p) {
+        if (!p.carTable) return "";
+        var n = p.carTable.length;
+        if (!n) return "<div class='car-bar'><span class='car-count none'>車 0 台</span></div>";
+        var cols = carTable().columns, pid = "cars-" + (++panelSeq);
+        var h = "<div class='car-bar'><button type='button' class='car-toggle' aria-expanded='false' aria-controls='" + pid + "'>" +
+            "車 " + n + " 台 <span class='arr' aria-hidden='true'>▼</span></button></div>";
+        h += "<div class='car-panel' id='" + pid + "' hidden><div class='car-scroll'><table class='car-table'><thead><tr>" +
+            cols.map(function (col) { return "<th scope='col' data-col='" + esc(col.key) + "'>" + esc(col.label) + "</th>"; }).join("") +
+            "</tr></thead><tbody>";
+        p.carTable.forEach(function (car) {
+            var href = state.tabBase ? state.tabBase + encodeURIComponent(car.module) + "/" + encodeURIComponent(car.id) : "";
+            var link = href ? "<a class='car-link' href='" + esc(href) + "' target='_blank' rel='noopener'>"
+                : "<a class='car-link' href='#' data-open='" + esc(car.id) + "' data-entity='" + esc(car.module) + "'>";
+            h += "<tr class='car-row" + (car.hit ? " hit" : "") + "' title='この車両を開く'>" + cols.map(function (col, i) {
+                var v = car.vals[col.key] || "";
+                if (v && col.type === "date") v = fmtDate(v);
+                var txt = esc(v);
+                // 最初の列（区分）に車両へのリンクを置く（キーボードでも開けるように）。行のどこを押しても同じリンクを開く
+                if (i === 0) txt = link + (txt || "開く") + "</a>";
+                return "<td data-col='" + esc(col.key) + "'>" + txt + "</td>";
+            }).join("") + "</tr>";
+        });
+        h += "</tbody></table></div>";
+        if (p.carsTruncated && p.carsTruncated.length) {
+            h += "<div class='car-note'>車が多いため、" + esc(p.carsTruncated.join("・")) + "の車は一部だけ出しています（50 人ぶんで先頭 " +
+                esc(String(CFG.carScanMax)) + " 台まで読みました）。全部はお客様の画面の関連リストで見てください。</div>";
+        }
+        return h + "</div>";
+    }
+    function toggleCars(btn) {
+        var panel = $(btn.getAttribute("aria-controls"));
+        if (!panel) return;
+        var open = panel.hidden;
+        panel.hidden = !open;
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+        var arr = btn.querySelector(".arr");
+        if (arr) arr.textContent = open ? "▲" : "▼";
     }
     function clearAll() {
         if (state.busy) return;    // 検索している間はクリアしない（ボタンも止めてある）
@@ -698,12 +806,23 @@
         $("search-form").addEventListener("submit", function (e) { e.preventDefault(); onSearch(); });
         $("clear-btn").addEventListener("click", clearAll);
         $("results").addEventListener("click", function (e) {
-            var a = e.target.closest ? e.target.closest("a[data-open]") : null;
-            if (!a) return;
+            if (!e.target.closest) return;
+            var tg = e.target.closest(".car-toggle");
+            if (tg) { e.preventDefault(); toggleCars(tg); return; }
+            var anyA = e.target.closest("a");
+            if (anyA && !anyA.hasAttribute("data-open")) return;    // ふつうのリンク（新しいタブ）はそのまま開かせる
+            var a = anyA;
+            if (!a) {
+                // 車の表の行: リンクの外を押しても、その行のリンク（車両のレコード）を開く
+                var tr = e.target.closest("tr.car-row"), link = tr && tr.querySelector("a.car-link");
+                if (link) { e.preventDefault(); link.click(); }
+                return;
+            }
             e.preventDefault();
             // 組織の URL が読めなかったときは、SDK でこの画面をレコードに切り替える（新しいタブにはならない）
-            try { ZOHO.CRM.UI.Record.open({ Entity: C().module, RecordID: a.getAttribute("data-open") }); }
-            catch (x) { setNotice("error", "連絡先を開けませんでした（" + esc(errText(x)) + "）。"); }
+            var entity = a.getAttribute("data-entity") || C().module;
+            try { ZOHO.CRM.UI.Record.open({ Entity: entity, RecordID: a.getAttribute("data-open") }); }
+            catch (x) { setNotice("error", (entity === C().module ? "連絡先" : "車両") + "を開けませんでした（" + esc(errText(x)) + "）。"); }
         });
         $("q-name").focus();
     }
@@ -735,7 +854,8 @@
         // CRM の入口は親の画面（crm.zoho.com / crmplus.zoho.com / sandbox など）。読めなければ config の既定
         // ホスト名が zoho.{com,jp,...} そのものか、そのサブドメイン（crm.zoho.com・crmplus.zoho.com・crmsandbox.zoho.com など）のときだけ使う
         var origin = /^https:\/\/([a-z0-9-]+\.)*zoho\.(com|jp|eu|in|com\.au|com\.cn|ca|sa)$/i.test(parent) ? parent : CFG.crmOrigin;
-        state.recordBase = domain ? origin + "/crm/" + domain + "/tab/" + C().module + "/" : "";
+        state.tabBase = domain ? origin + "/crm/" + domain + "/tab/" : "";
+        state.recordBase = state.tabBase ? state.tabBase + C().module + "/" : "";
     }
 
     // 入力欄の Enter はフォームの submit で検索になる

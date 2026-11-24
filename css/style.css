@@ -61,6 +61,33 @@ a.row:focus { outline: 2px solid #4a7bd0; }
 .more { display: block; font-size: 13px; color: #666; }
 .none { color: #999; }
 
+/* 1人ぶんの枠（行＋「車 N 台」の開閉＋車の表） */
+.person { background: #fff; border: 1px solid #d5dbe3; border-radius: 8px; min-width: 0; }
+.person > a.row { border: none; border-radius: 8px; }
+.person > a.row:hover { border-color: transparent; }
+.car-bar { padding: 0 12px 8px; }
+.car-toggle {
+    font-size: 14px; padding: 3px 12px; border-radius: 14px; cursor: pointer;
+    background: #fff; color: #1f3864; border: 1px solid #9fb4d8;
+}
+.car-toggle:hover { background: #eef3fb; }
+.car-toggle[aria-expanded="true"] { background: #1f3864; color: #fff; border-color: #1f3864; }
+.car-count { font-size: 14px; }
+.car-panel { padding: 0 12px 10px; }
+.car-scroll { overflow-x: auto; max-width: 100%; border: 1px solid #d5dbe3; border-radius: 6px; }
+.car-table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.car-table th {
+    background: #eef2f7; color: #1f3864; text-align: left; font-weight: bold; white-space: nowrap;
+    padding: 6px 10px; border-bottom: 1px solid #d5dbe3;
+}
+.car-table td { padding: 6px 10px; border-top: 1px solid #e6e9ee; white-space: nowrap; }
+.car-table tbody tr:first-child td { border-top: none; }
+.car-row { cursor: pointer; }
+.car-row:hover td { background: #f5f8ff; }
+.car-row.hit td { background: #fff3c4; font-weight: bold; }
+.car-link { color: #1f4fa0; }
+.car-note { font-size: 13px; color: #6b4d00; margin-top: 4px; }
+
 .badge { display: inline-block; font-size: 13px; padding: 1px 8px; border-radius: 10px; margin: 0 4px 4px 0; background: #e0e8f6; color: #1f3864; border: 1px solid #9fb4d8; white-space: nowrap; }
 .b-phone, .b-no { background: #e3f4e5; border-color: #8cc79a; color: #1b5e20; }
 .b-plate, .b-vin { background: #fdeede; border-color: #e3a86a; color: #7a3d00; }

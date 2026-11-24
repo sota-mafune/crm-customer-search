@@ -37,7 +37,9 @@ var CUSTOMER_SEARCH_CONFIG = {
             plateFull: "field14",
             plateNumber: "field17",      // 登録番号４桁（数字 1〜4 桁、ゼロ埋めなし）
             platePad: false,
-            vinField: "field70"          // 車台番号
+            vinField: "field70",         // 車台番号
+            // 車の表（carTable）の列に使う項目。区分・登録番号は組み立てるので書かない。無い列は空欄
+            carFields: { name: "Name", vin: "field70", first: "field10", shaken: "field62" }   // 初年度・満了日（車検満了日）
         },
         {
             key: "jumps",
@@ -49,9 +51,25 @@ var CUSTOMER_SEARCH_CONFIG = {
             plateParts: ["field108", "field111", "field114", "field118"],
             plateNumber: "field118",
             platePad: true,              // 一連番号に4桁のゼロ埋め（例 0123）が少しあるので、両方の形で探す
-            vinField: "field56"
+            vinField: "field56",
+            carFields: { name: "Name", vin: "field56", first: "field55", shaken: "field82" }   // 初度登録・車検満了日
         }
     ],
+
+    // 「車 N 台」を開くと出る表（連絡先の関連リストに似せる。1行＝車1台）。
+    // key: src＝区分（上の label）、plate＝登録番号（plateFull か plateParts をつなぐ）、それ以外は各車両の carFields の項目。
+    // type: "date" は YYYY/MM/DD で出す。並びは当たった車 → sortDate の列の近い順（今日以降の早い順 → 過ぎたものの新しい順 → 空）
+    carTable: {
+        columns: [
+            { key: "src", label: "区分" },
+            { key: "name", label: "車名" },
+            { key: "plate", label: "登録番号" },
+            { key: "shaken", label: "車検満了日", type: "date" },
+            { key: "first", label: "初度登録" },
+            { key: "vin", label: "車台番号" }
+        ],
+        sortDate: "shaken"
+    },
 
     maxPeople: 100,          // 画面に出すお客様の上限。超えたら先頭だけ出して知らせる
     contactScanMax: 400,     // 1つの問い合わせで読む連絡先の上限（200 件ずつ）。超えたら「多すぎる」と知らせる
