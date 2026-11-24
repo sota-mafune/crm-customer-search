@@ -11,6 +11,8 @@
  *   車台番号 … like '%語%'（末尾の数字 6 桁など）→ ハイフンを除いて手元で確かめる
  * 車両で当たったら、参照先の連絡先の id を集めて id in (50 個ずつ) で読む。出すお客様の「持っている車」も 50 人ずつまとめて読む。
  * 「車 N 台 ▼」を開くと、その「持っている車」を関連リストに似た表で出す（列は config の carTable。同じ1本で読んだものを使い、開いたときに読み直さない）。
+ * 削除日（config の deletedField）の入った車は、車両の COQL の where に「削除日 is null」を足して外し、読んだ後に手元でも外す。
+ *   ナンバー・車台番号の当たりにも、持っている車・車の数にも、紐づいていない車の台数にも数えない。
  *
  * 項目の対応は js/config.js（CUSTOMER_SEARCH_CONFIG）だけに書く。秘密情報・組織の id はここに書かない（実行時に SDK で読む）。
  */
@@ -31,6 +33,7 @@
         recordBase: "",             // 連絡先を新しいタブで開く URL の頭（https://.../crm/{組織}/tab/Contacts/）。読めなければ ""
         tabBase: "",                // レコードを新しいタブで開く URL の頭（https://.../crm/{組織}/tab/）。車両にも使う。読めなければ ""
         badCarCols: {},             // 車の表の列の項目を COQL が断った車両（key → true）。以後その車両は列の項目を読まない
+        badDeleted: {},             // 削除日の項目を COQL が断った車両（key → エラーの文）。以後その車両は削除日で外さない（知らせる）
         nameField: null,            // 氏名の部分一致に使えた項目（一度通ったら覚える）
         badNameFields: {},          // COQL が断った氏名の項目
         badPhoneFields: {},         // COQL が断った電話の項目
@@ -284,20 +287,26 @@
         c.phoneFields.forEach(function (p) { cols.push(p.api); });
         return cols;
     }
-    function vehicleSelect(v) {
+    // 車両を探すときの select。useDel なら削除日の項目も読む（手元でも外すため）
+    function vehicleSelect(v, useDel) {
         var cols = ["id", v.nameField, v.contactField, v.vinField];
         if (v.plateFull) cols.push(v.plateFull);
         (v.plateParts || []).forEach(function (p) { cols.push(p); });
         if (cols.indexOf(v.plateNumber) === -1) cols.push(v.plateNumber);
+        if (useDel && v.deletedField && cols.indexOf(v.deletedField) === -1) cols.push(v.deletedField);
         return cols;
     }
     // 持っている車を読むときの select（探すときの項目＋車の表の列の項目）。同じ1本で取る（開いたときに読み直さない）
-    function carSelect(v) {
-        var cols = vehicleSelect(v), cf = v.carFields || {};
-        if (state.badCarCols[v.key]) return cols;
+    function carSelect(v, useDel) {
+        var cols = vehicleSelect(v, useDel), cf = v.carFields || {};
         Object.keys(cf).forEach(function (k) { if (cf[k] && cols.indexOf(cf[k]) === -1) cols.push(cf[k]); });
         return cols;
     }
+    // 削除日の入った車か（読んだ後の手元の守り。COQL の is null が効かなくても外す）。
+    // 関数（現在の車を選ぶもの）と同じく「値が無い（null）」なら残す。空の文字も残す
+    function isDeleted(v, row) { return !!v.deletedField && str(row[v.deletedField]) !== ""; }
+    // where に「削除日が空」を足す（2つずつ括弧で入れ子）
+    function aliveWhere(v, where) { return nest([where, v.deletedField + " is null"], "and"); }
     function hasCarExtras(v) {
         var base = vehicleSelect(v), cf = v.carFields || {};
         return Object.keys(cf).some(function (k) { return cf[k] && base.indexOf(cf[k]) === -1; });
@@ -464,6 +473,34 @@
         throw new Error("想定外の欄: " + kind);
     }
 
+    // 車両の COQL。削除日の条件（where に「削除日 is null」・select に削除日）と、wantExtras なら車の表の列の項目を付けて流す。
+    // 恒久的なエラーで断られたら、列の項目を外す → 削除日を外す → 両方外す の順に流し直し、通った形で外したものは
+    // 以後その車両では使わない（列は空欄、削除日は外さずに出して知らせる）。どれも通らなければ最初のエラーを投げる。
+    // 外すかどうかは出発時の state で決める（同じ車両の塊が同時に走り、先の1本が印を立てても、この1本は自分で流し直す）
+    async function vehicleQuery(v, where, cap, wantExtras, droppedCols) {
+        var useX = !!wantExtras && !state.badCarCols[v.key] && hasCarExtras(v);
+        var useD = !!v.deletedField && !state.badDeleted[v.key];
+        var opts = [[useX, useD]];
+        if (useX) opts.push([false, useD]);
+        if (useD) opts.push([useX, false]);
+        if (useX && useD) opts.push([false, false]);
+        var first = null;
+        for (var i = 0; i < opts.length; i++) {
+            var x = opts[i][0], d = opts[i][1], r;
+            try {
+                r = await coqlPaged(x ? carSelect(v, d) : vehicleSelect(v, d), v.module, d ? aliveWhere(v, where) : where, cap);
+            } catch (e) {
+                if (!first) { if (!isPermanent(e)) throw e; first = e; continue; }
+                if (!isPermanent(e)) throw first;
+                continue;
+            }
+            if (useX && !x) { state.badCarCols[v.key] = true; if (droppedCols) droppedCols[v.label] = errText(first); }
+            if (useD && !d) state.badDeleted[v.key] = errText(first);
+            return r;
+        }
+        throw first;
+    }
+
     async function searchVehiclesBy(v, kind, crit) {
         var where;
         if (kind === "plate") {
@@ -473,7 +510,7 @@
         } else {
             where = "(" + v.vinField + " like '%" + crit.vin.server + "%')";
         }
-        return coqlPaged(vehicleSelect(v), v.module, where, CFG.vehicleScanMax);
+        return vehicleQuery(v, where, CFG.vehicleScanMax, false, null);
     }
 
     async function runSearch(crit) {
@@ -510,6 +547,7 @@
                     var r = await searchVehiclesBy(v, kind, crit);
                     if (r.more) warn.push(KIND_LABEL[kind] + "で当たる車（" + v.label + "）が多すぎて、全部は読めませんでした（先頭 " + CFG.vehicleScanMax + " 台まで）。もっと詳しく入れてください" + (kind === "plate" ? "（例: 地名から入れる）" : "") + "。");
                     r.rows.forEach(function (row) {
+                        if (isDeleted(v, row)) return;    // 削除日の入った車は当たりにも、紐づいていない台数にも数えない
                         var h = vehicleHits(v, row, crit);
                         if (!h[kind]) return;
                         var cid = idOnly(row[v.contactField]);
@@ -567,6 +605,12 @@
                 warn.push("持っている車を読めませんでした（" + errText(eCars) + "）。お客様の一覧だけ出しています。");
             }
         }
+        // 削除日の項目を CRM が受け付けなかった車両（この画面を開いている間は毎回知らせる）
+        CFG.vehicles.forEach(function (v) {
+            if (!state.badDeleted[v.key]) return;
+            warn.push("CRM が「" + (v.deletedLabel || v.deletedField) + "」の項目（" + v.label + "）を受け付けなかったため、" +
+                v.label + "の車は削除日の入ったものも外さずに出しています（" + state.badDeleted[v.key] + "）。");
+        });
 
         list.sort(function (a, b) {
             return Object.keys(b.hits).length - Object.keys(a.hits).length ||
@@ -577,7 +621,8 @@
     }
 
     // 持っている車を読む（モジュールごと・50 人ずつ1本）。車の表の列の項目も同じ1本で取る。
-    // 列の項目を CRM が断ったら（恒久的なエラー）、探すときの項目だけでその1本を流し直し、以後その車両の列は空欄にする
+    // 列の項目を CRM が断ったら（恒久的なエラー）、探すときの項目だけでその1本を流し直し、以後その車両の列は空欄にする。
+    // 削除日の入った車は where で外し、読んだ後にも手元で外す（車の数・短い並び・表のどれにも入れない）
     async function readCars(list, warn) {
         var ids = list.map(function (p) { return p.id; }), byId = {};
         list.forEach(function (p) { p.cars = []; p.carsTruncated = []; byId[p.id] = p; });
@@ -585,22 +630,13 @@
         CFG.vehicles.forEach(function (v) {
             chunks(ids, CFG.inMax).forEach(function (part) {
                 tasks.push(async function () {
-                    var where = "(" + v.contactField + " in " + inList(part) + ")", r;
-                    // 出発時に列つきの select を使ったか（同じ車両の塊が同時に走り、先の1本が badCarCols を立てても、この1本は自分で流し直す）
-                    var usedExtras = !state.badCarCols[v.key] && hasCarExtras(v);
-                    try {
-                        r = await coqlPaged(usedExtras ? carSelect(v) : vehicleSelect(v), v.module, where, CFG.carScanMax);
-                    } catch (e) {
-                        if (!isPermanent(e) || !usedExtras) throw e;
-                        try { r = await coqlPaged(vehicleSelect(v), v.module, where, CFG.carScanMax); } catch (e2) { throw e; }
-                        state.badCarCols[v.key] = true;
-                        dropped[v.label] = errText(e);
-                    }
+                    var where = "(" + v.contactField + " in " + inList(part) + ")";
+                    var r = await vehicleQuery(v, where, CFG.carScanMax, true, dropped);
                     if (r.more) part.forEach(function (id) { var p = byId[id]; if (p && p.carsTruncated.indexOf(v.label) === -1) p.carsTruncated.push(v.label); });
                     var cf = v.carFields || {};
                     r.rows.forEach(function (row) {
                         var p = byId[idOnly(row[v.contactField])];
-                        if (!p) return;
+                        if (!p || isDeleted(v, row)) return;
                         var rid = idOnly(row.id), key = v.key + ":" + rid, vals = {};
                         Object.keys(cf).forEach(function (k) { vals[k] = cf[k] ? str(row[cf[k]]) : ""; });
                         vals.src = v.label;

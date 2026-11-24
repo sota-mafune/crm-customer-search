@@ -38,6 +38,9 @@ var CUSTOMER_SEARCH_CONFIG = {
             plateNumber: "field17",      // 登録番号４桁（数字 1〜4 桁、ゼロ埋めなし）
             platePad: false,
             vinField: "field70",         // 車台番号
+            // 削除日（date）。値の入った車は、持っている車・車の数・ナンバーと車台番号の当たりから外す。無い車両には書かない
+            deletedField: "field68",
+            deletedLabel: "車両削除日",
             // 車の表（carTable）の列に使う項目。区分・登録番号は組み立てるので書かない。無い列は空欄
             carFields: { name: "Name", vin: "field70", first: "field10", shaken: "field62" }   // 初年度・満了日（車検満了日）
         },
