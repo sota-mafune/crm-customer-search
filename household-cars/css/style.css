@@ -1,0 +1,58 @@
+/* 世帯の車ウィジェット。顧客検索の車の表に合わせる。足した色は車検満了日が近い行の1色だけ */
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body {
+    font-family: "Meiryo", "Hiragino Sans", "Noto Sans JP", sans-serif;
+    font-size: 15px; line-height: 1.5; color: #222; background: #fff; padding-bottom: 8px;
+}
+.view { padding: 0 8px; }
+#view-message { padding-top: 16px; }
+#view-message h1 { font-size: 18px; color: #1f3864; margin: 0 0 6px; }
+#view-message p { font-size: 15px; margin: 0; }
+
+.head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 8px 2px 6px; }
+.head-title { font-size: 16px; font-weight: bold; color: #1f3864; }
+.status { font-size: 14px; color: #444; }
+
+.notice { margin: 4px 0 8px; padding: 10px 12px; border-radius: 6px; font-size: 14px; }
+.notice-error { background: #fdecea; border: 1px solid #c0392b; color: #8e1b10; }
+.notice-warn { background: #fff6e0; border: 1px solid #d39e00; color: #6b4d00; }
+.empty { border: 1px dashed #9aa5b5; border-radius: 8px; padding: 14px; text-align: center; color: #555; }
+.family-none { font-size: 14px; color: #555; margin: 0 2px 6px; }
+
+/* 車の表（顧客検索の車の表と同じ見た目） */
+.car-scroll { overflow-x: auto; max-width: 100%; border: 1px solid #d5dbe3; border-radius: 6px; }
+.car-table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.car-table th {
+    background: #eef2f7; color: #1f3864; text-align: left; font-weight: bold; white-space: nowrap;
+    padding: 6px 10px; border-bottom: 1px solid #d5dbe3;
+}
+.car-table td { padding: 6px 10px; border-top: 1px solid #e6e9ee; white-space: nowrap; }
+.car-table tbody tr:first-child td { border-top: none; }
+.car-row { cursor: pointer; }
+.car-row:hover td { background: #f5f8ff; }
+.car-link { color: #1f4fa0; }
+
+/* 車検満了日が近い行（足した1色） */
+.car-row.soon td { background: #ffe3d3; }
+.car-row.soon td[data-col="shaken"] { font-weight: bold; }
+.car-row.soon:hover td { background: #ffd6c0; }
+.legend { font-size: 13px; color: #555; margin-top: 4px; display: flex; align-items: center; gap: 6px; }
+.legend-soon { display: inline-block; width: 14px; height: 14px; background: #ffe3d3; border: 1px solid #e3b49a; border-radius: 3px; }
+
+/* 持ち主 */
+.owner-self { font-weight: bold; color: #1f3864; }
+.owner-rel { color: #555; }
+.cand {
+    display: inline-block; font-size: 12px; padding: 0 6px; margin-left: 6px; border-radius: 9px;
+    background: #fff; color: #555; border: 1px solid #9aa5b5; vertical-align: 1px;
+}
+
+.unlinked { font-size: 14px; color: #444; margin-top: 8px; }
+
+.env-badge {
+    position: fixed; right: 6px; top: 4px; z-index: 30; font-size: 12px; padding: 1px 8px; border-radius: 10px;
+    opacity: .9; pointer-events: none;
+}
+.env-sandbox { background: #ffe08a; color: #5a4300; border: 1px solid #c9a300; }
