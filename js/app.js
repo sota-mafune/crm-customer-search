@@ -1,7 +1,7 @@
 /*
  * 顧客検索ウィジェット（Zoho CRM の Web タブに置く外部ホストのウィジェット）。読むだけ（作成・更新はしない）
  *
- * 欄: 氏名・フリガナ・電話番号・顧客ＮＯ・ナンバー（登録番号）・車台番号。入れた欄の「どれか」に当たったお客様を出す（OR）。空の欄は使わない。
+ * 欄: 氏名・フリガナ・電話番号・顧客ＮＯ・ナンバー（登録番号）・車台番号・整理NO。入れた欄の「どれか」に当たったお客様を出す（OR）。空の欄は使わない。
  * 探し方（欄ごとに別の COQL。広く当たる欄があっても、ほかの欄の当たりが上限で落ちないように）:
  *   氏名     … 連絡先の氏名を like '%語%'（空白で区切った語のうち長いもの1つ）→ 読んだ後に全部の語が入っているかを手元で確かめる
  *   フリガナ … 半角カナにそろえて like '%語%' → 同じく手元で確かめる（CRM の値は半角カナ＋半角空白）
@@ -9,6 +9,10 @@
  *   顧客ＮＯ … = で完全一致
  *   ナンバー … 末尾の一連番号（数字 1〜4 桁）で車両を = / in で引き、地名などが入っていれば手元で後ろ一致を確かめる
  *   車台番号 … like '%語%'（末尾の数字 6 桁など）→ ハイフンを除いて手元で確かめる
+ *   整理NO   … 整理NO のある車両で完全一致（入れたまま・頭の 0 を外した形の in）
+ * 絞り込みの欄（車種名・担当者コード・営業所コード）は AND。1つで大量に当たるので、OR にはしない:
+ *   ほかの欄と一緒に入れたら、ほかの欄で当たったお客様の持っている車を読み、条件に全部当たる車を持つ方だけを残す
+ *   絞り込みの欄だけなら、入れた欄の項目が全部ある車両で、条件を and でつないだ1本で車を探す（先頭 vehicleScanMax 台まで）
  * 車両で当たったら、参照先の連絡先の id を集めて id in (50 個ずつ) で読む。出すお客様の「持っている車」も 50 人ずつまとめて読む。
  * 「車 N 台 ▼」を開くと、その「持っている車」を関連リストに似た表で出す（列は config の carTable。同じ1本で読んだものを使い、開いたときに読み直さない）。
  * 削除日（config の deletedField）の入った車は、車両の COQL の where に「削除日 is null」を足して外し、読んだ後に手元でも外す。
@@ -26,8 +30,15 @@
     var WIDE_PX = 700;
     var CARS_SHOWN = 6;             // 1人に並べる車の数（超えた分は「ほか N 台」）
 
-    var KIND_LABEL = { name: "氏名", kana: "フリガナ", phone: "電話", no: "顧客ＮＯ", plate: "ナンバー", vin: "車台番号" };
-    var KIND_ORDER = ["name", "kana", "phone", "no", "plate", "vin"];
+    var KIND_LABEL = { name: "氏名", kana: "フリガナ", phone: "電話", no: "顧客ＮＯ", plate: "ナンバー", vin: "車台番号", seiri: "整理NO",
+        model: "車種名", staff: "担当者コード", office: "営業所コード" };
+    var KIND_ORDER = ["name", "kana", "phone", "no", "plate", "vin", "seiri", "model", "staff", "office"];
+    // 探す欄（どれかに当たればよい: OR）と、絞り込みの欄（ほかの欄の結果を、その条件の車を持つ方だけにする: AND）
+    var ID_KINDS = ["name", "kana", "phone", "no", "plate", "vin", "seiri"];
+    var FILTER_KINDS = ["model", "staff", "office"];
+    var FILTER_FIELD = { model: "modelField", staff: "staffField", office: "officeField" };
+    var INPUT_IDS = { name: "q-name", kana: "q-kana", phone: "q-phone", no: "q-no", plate: "q-plate", vin: "q-vin", seiri: "q-seiri",
+        model: "q-model", staff: "q-staff", office: "q-office" };
 
     var state = {
         user: null,
@@ -38,7 +49,8 @@
         nameField: null,            // 氏名の部分一致に使えた項目（一度通ったら覚える）
         badNameFields: {},          // COQL が断った氏名の項目
         badPhoneFields: {},         // COQL が断った電話の項目
-        seq: 0,                     // 検索の連番（遅れて返った古い結果を捨てる）
+        crit: null,                 // いま流している検索の条件（車両の select に整理NO・絞り込みの項目を足すため）
+        seq: 0,                    // 検索の連番（遅れて返った古い結果を捨てる）
         busy: false
     };
 
@@ -146,6 +158,41 @@
     }
     // 車台番号: 半角・大文字、空白とハイフンを除く
     function vinKey(s) { return toHalfAscii(s).toUpperCase().replace(/[\s\-‐−ー]/g, ""); }
+    // 整理NO・担当者コード・営業所コード（数字のコード）: 半角にして空白を除く。比べるときは頭の 0 を外す（0123 と 123 を同じに）
+    function codeKey(s) { return toHalfAscii(s).replace(/\s+/g, ""); }
+    function codeCmp(s) { return codeKey(s).replace(/^0+(?=.)/, ""); }
+    // CRM に送る書き方: 入れたまま・頭の 0 を外した形（どちらかで入っていれば当たる）
+    function codeVariants(k) {
+        var out = [k], z = k.replace(/^0+(?=.)/, "");
+        if (out.indexOf(z) === -1) out.push(z);
+        return out;
+    }
+    // 半角カタカナ → 全角カタカナ（濁点・半濁点は1文字にまとめる）。車種名は全角・半角の両方で入っているため、両方の形で探す
+    function toFullKana(s) {
+        var out = "";
+        s = String(s || "");
+        for (var i = 0; i < s.length; i++) {
+            var c = s.charAt(i), k = HALF_KANA.indexOf(c), nx = s.charAt(i + 1);
+            if (k === -1) { out += c === "ﾞ" ? "゛" : (c === "ﾟ" ? "゜" : c); continue; }
+            var f = FULL_KANA.charAt(k);
+            if (nx === "ﾞ" && f === "ウ") { out += "ヴ"; i++; continue; }
+            if (nx === "ﾞ" && VOICED.indexOf(String.fromCharCode(f.charCodeAt(0) + 1)) !== -1) { out += String.fromCharCode(f.charCodeAt(0) + 1); i++; continue; }
+            if (nx === "ﾟ" && SEMI.indexOf(String.fromCharCode(f.charCodeAt(0) + 2)) !== -1) { out += String.fromCharCode(f.charCodeAt(0) + 2); i++; continue; }
+            out += f;
+        }
+        return out;
+    }
+    // 車種名: 半角カナ・半角英数・大文字にそろえ、空白を除いて比べる
+    function modelKey(s) { return toHalfKana(toHalfAscii(s)).replace(/\s+/g, "").toUpperCase(); }
+    // 車種名の語を CRM に送る形（入れたまま・全角カナ・半角カナ・英字の大文字）。like の or で並べる
+    function modelVariants(w) {
+        var base = toHalfAscii(w), full = toFullKana(hiraToKata(base)), half = toHalfKana(base), out = [];
+        [base, full, half, base.toUpperCase(), full.toUpperCase(), half.toUpperCase()].forEach(function (x) {
+            x = lit(x);
+            if (x && out.indexOf(x) === -1) out.push(x);
+        });
+        return out;
+    }
 
     // ---------------------------------------------------------------- 入力 → 探す条件
     // 空白なしで入れた氏名・フリガナ（「山田太郎」）を、CRM の値の形（姓と名の間に空白: 「山田　太郎」「山田 太郎」）に合わせるための候補。
@@ -223,6 +270,20 @@
                 crit.vin = { server: lit(server), key: vk };
             }
         }
+        // 整理NO（探す欄）・担当者コード・営業所コード（絞り込み）: 数字のコードの完全一致（入れたまま・頭の 0 を外した形の in）
+        [["seiri", "整理NO"], ["staff", "担当者コード"], ["office", "営業所コード"]].forEach(function (kl) {
+            if (!String(raw[kl[0]] || "").trim()) return;
+            var ck2 = lit(codeKey(raw[kl[0]]));
+            if (!/^[0-9]+$/.test(ck2)) errors.push(kl[1] + "は数字で入れてください。");
+            else crit[kl[0]] = { values: codeVariants(ck2), key: codeCmp(ck2) };
+        });
+        // 車種名（絞り込み）: 部分一致。長い語1つを全角カナ・半角カナなどの形で like の or → 手元で全部の語が入っているかを確かめる
+        var mw = words(toHalfAscii(raw.model).trim());
+        if (mw.length) {
+            var mk = mw.map(modelKey);
+            if (mk.join("").length < CFG.modelMinLen) errors.push("車種名は " + CFG.modelMinLen + " 文字以上入れてください。");
+            else crit.model = { likes: modelVariants(longest(mw)), keys: mk };
+        }
         return { crit: crit, errors: errors };
     }
 
@@ -288,14 +349,45 @@
         c.phoneFields.forEach(function (p) { cols.push(p.api); });
         return cols;
     }
-    // 車両を探すときの select。useDel なら削除日の項目も読む（手元でも外すため）
+    // 車両を探すときの select。useDel なら削除日の項目も読む（手元でも外すため）。
+    // 整理NO・絞り込みの欄を入れた検索のときだけ、その項目も読む（手元で確かめるため。入れていない検索の COQL は今までと同じ）
     function vehicleSelect(v, useDel) {
-        var cols = ["id", v.nameField, v.contactField, v.vinField];
+        var cols = ["id", v.nameField, v.contactField, v.vinField], cr = state.crit || {};
         if (v.plateFull) cols.push(v.plateFull);
         (v.plateParts || []).forEach(function (p) { cols.push(p); });
         if (cols.indexOf(v.plateNumber) === -1) cols.push(v.plateNumber);
+        if (cr.seiri && v.seiriField && cols.indexOf(v.seiriField) === -1) cols.push(v.seiriField);
+        FILTER_KINDS.forEach(function (k) {
+            var f = v[FILTER_FIELD[k]];
+            if (cr[k] && f && cols.indexOf(f) === -1) cols.push(f);
+        });
         if (useDel && v.deletedField && cols.indexOf(v.deletedField) === -1) cols.push(v.deletedField);
         return cols;
+    }
+    // 入れた絞り込みの欄（model・staff・office のうち入れたもの）
+    function filterKinds(crit) { return FILTER_KINDS.filter(function (k) { return !!crit[k]; }); }
+    // この車両で、入れた絞り込みの欄の項目が全部あるか（無い項目があれば、その車両の車は絞り込みに当たらない）
+    function supportsFilters(v, fk) { return fk.every(function (k) { return !!v[FILTER_FIELD[k]]; }); }
+    // 絞り込みの where（入れた欄を and で。車種名は形ごとの like を or で）
+    function filterWhere(v, crit, fk) {
+        return nest(fk.map(function (k) {
+            var f = v[FILTER_FIELD[k]];
+            if (k === "model") {
+                var likes = crit.model.likes.map(function (w) { return f + " like '%" + w + "%'"; });
+                return likes.length === 1 ? likes[0] : nest(likes, "or");
+            }
+            var vals = crit[k].values;
+            return vals.length === 1 ? f + " = '" + vals[0] + "'" : f + " in " + inList(vals);
+        }), "and");
+    }
+    // 読んだ車が絞り込みの欄に全部当たるか（手元の判定）
+    function filterHit(v, row, crit, fk) {
+        if (!fk.length || !supportsFilters(v, fk)) return false;
+        return fk.every(function (k) {
+            var val = str(row[v[FILTER_FIELD[k]]]);
+            if (k === "model") { var mk = modelKey(val); return !!mk && crit.model.keys.every(function (w) { return mk.indexOf(w) !== -1; }); }
+            return val !== "" && codeCmp(val) === crit[k].key;
+        });
     }
     // 持っている車を読むときの select（探すときの項目＋車の表の列の項目）。同じ1本で取る（開いたときに読み直さない）
     function carSelect(v, useDel) {
@@ -396,6 +488,10 @@
         if (crit.vin) {
             var vk = vinKey(str(r[v.vinField]));
             if (vk && vk.indexOf(crit.vin.key) !== -1) hits.vin = true;
+        }
+        if (crit.seiri && v.seiriField) {
+            var sv = str(r[v.seiriField]);
+            if (sv !== "" && codeCmp(sv) === crit.seiri.key) hits.seiri = true;
         }
         return hits;
     }
@@ -523,6 +619,11 @@
             var vals = [crit.plate.number];
             if (v.platePad) { var p4 = ("0000" + crit.plate.number).slice(-4); if (p4 !== crit.plate.number) vals.push(p4); }
             where = vals.length === 1 ? "(" + v.plateNumber + " = '" + vals[0] + "')" : "(" + v.plateNumber + " in " + inList(vals) + ")";
+        } else if (kind === "seiri") {
+            var sv = crit.seiri.values;
+            where = sv.length === 1 ? "(" + v.seiriField + " = '" + sv[0] + "')" : "(" + v.seiriField + " in " + inList(sv) + ")";
+        } else if (kind === "filter") {
+            where = filterWhere(v, crit, filterKinds(crit));
         } else {
             where = "(" + v.vinField + " like '%" + crit.vin.server + "%')";
         }
@@ -557,8 +658,9 @@
             });
         });
         CFG.vehicles.forEach(function (v) {
-            ["plate", "vin"].forEach(function (kind) {
+            ["plate", "vin", "seiri"].forEach(function (kind) {
                 if (!crit[kind]) return;
+                if (kind === "seiri" && !v.seiriField) return;   // 整理NO の項目（config の seiriField）の無い車両は探さない
                 tasks.push(async function () {
                     var r = await searchVehiclesBy(v, kind, crit);
                     if (r.more) warn.push(KIND_LABEL[kind] + "で当たる車（" + v.label + "）が多すぎて、全部は読めませんでした（先頭 " + CFG.vehicleScanMax + " 台まで）。もっと詳しく入れてください" + (kind === "plate" ? "（例: 地名から入れる）" : "") + "。");
@@ -575,6 +677,27 @@
                 });
             });
         });
+        // 絞り込みの欄だけを入れたとき: 入れた欄の項目が全部ある車両で、条件を and でつないだ1本（車両ごと）で車を探す
+        var fk = filterKinds(crit);
+        var hasId = ID_KINDS.some(function (k) { return !!crit[k]; });
+        if (fk.length && !hasId) {
+            CFG.vehicles.forEach(function (v) {
+                if (!supportsFilters(v, fk)) return;
+                tasks.push(async function () {
+                    var r = await searchVehiclesBy(v, "filter", crit);
+                    if (r.more) warn.push(fk.map(function (k) { return KIND_LABEL[k]; }).join("・") + "で当たる車（" + v.label + "）が多すぎて、全部は読めませんでした（先頭 " +
+                        CFG.vehicleScanMax + " 台まで）。ほかの欄（氏名・ナンバーなど）も入れて絞ってください。");
+                    r.rows.forEach(function (row) {
+                        if (isDeleted(v, row) || !filterHit(v, row, crit, fk)) return;
+                        var cid = idOnly(row[v.contactField]);
+                        if (!cid) { unlinked++; return; }
+                        var p = person(cid);
+                        fk.forEach(function (k) { p.hits[k] = true; });
+                        p.carHits[v.key + ":" + idOnly(row.id)] = true;
+                    });
+                });
+            });
+        }
         await pool(tasks);
         // 氏名の項目（Full_Name）を CRM が受け付けなかったときは、代わりの項目で探して・出していると知らせる
         var cc = C();
@@ -586,10 +709,29 @@
         }
         if (unlinked) warn.push("当たった車のうち " + unlinked + " 台は、お客様（連絡先）に紐づいていないため出していません。");
 
-        // 上限を超えたら、当たった欄の多い方から（同じなら見つけた順に）先頭だけを出す
         var list = Object.keys(people).map(function (k) { return people[k]; });
-        var over = list.length > CFG.maxPeople;
         list.sort(function (a, b) { return Object.keys(b.hits).length - Object.keys(a.hits).length || a.order - b.order; });
+
+        // 絞り込みの欄をほかの欄と一緒に入れたとき: ほかの欄で当たったお客様の持っている車を読み、
+        // 絞り込みの条件に全部当たる車（削除日の入っていないもの）を持つ方だけを残す（AND）。読んだ車はそのまま表に使う
+        var carsDone = false;
+        if (fk.length && hasId && list.length) {
+            if (list.length > CFG.filterScanMax) {
+                warn.push("ほかの欄で当たったお客様が " + list.length + " 人と多いため、先頭の " + CFG.filterScanMax + " 人だけを" +
+                    fk.map(function (k) { return KIND_LABEL[k]; }).join("・") + "で絞り込みました。もっと詳しく入れてください。");
+                list = list.slice(0, CFG.filterScanMax);
+            }
+            await readCars(list, warn);     // 読めなければ絞り込めないので、その回は「検索できませんでした」にする
+            carsDone = true;
+            list = list.filter(function (p) {
+                var any = p.cars.some(function (car) { return car.fhit; });
+                if (any) fk.forEach(function (k) { p.hits[k] = true; });
+                return any;
+            });
+        }
+
+        // 上限を超えたら、当たった欄の多い方から（同じなら見つけた順に）先頭だけを出す
+        var over = list.length > CFG.maxPeople;
         var total = list.length;
         if (over) list = list.slice(0, CFG.maxPeople);
 
@@ -615,7 +757,7 @@
 
         // 持っている車（出すお客様だけ。モジュールごとに 50 人ずつ）
         var carsOk = true;
-        if (list.length) {
+        if (list.length && !carsDone) {
             try { await readCars(list, warn); } catch (eCars) {
                 carsOk = false;
                 warn.push("持っている車を読めませんでした（" + errText(eCars) + "）。お客様の一覧だけ出しています。");
@@ -643,7 +785,7 @@
     async function readCars(list, warn) {
         var ids = list.map(function (p) { return p.id; }), byId = {};
         list.forEach(function (p) { p.cars = []; p.carsTruncated = []; byId[p.id] = p; });
-        var tasks = [], dropped = {};
+        var tasks = [], dropped = {}, crit = state.crit || {}, fk = filterKinds(crit);
         CFG.vehicles.forEach(function (v) {
             chunks(ids, CFG.inMax).forEach(function (part) {
                 tasks.push(async function () {
@@ -658,8 +800,10 @@
                         Object.keys(cf).forEach(function (k) { vals[k] = cf[k] ? str(row[cf[k]]) : ""; });
                         vals.src = v.label;
                         vals.plate = platePartsText(v, row);
-                        p.cars.push({ id: rid, module: v.module, srcKey: v.key, name: str(row[v.nameField]), plate: vals.plate, src: v.label,
-                            hit: !!p.carHits[key], vals: vals });
+                        // fhit: 絞り込みの欄（車種名・担当者コード・営業所コード）に全部当たる車。当たった車と同じく黄色にする
+                        var fh = filterHit(v, row, crit, fk);
+                        p.cars.push({ id: rid, module: v.module, tab: v.tabModule || v.module, srcKey: v.key, name: str(row[v.nameField]), plate: vals.plate, src: v.label,
+                            hit: !!p.carHits[key] || fh, fhit: fh, vals: vals });
                     });
                 });
             });
@@ -694,7 +838,9 @@
         el.hidden = false;
     }
     function readInputs() {
-        return { name: $("q-name").value, kana: $("q-kana").value, phone: $("q-phone").value, no: $("q-no").value, plate: $("q-plate").value, vin: $("q-vin").value };
+        var out = {};
+        KIND_ORDER.forEach(function (k) { var el = $(INPUT_IDS[k]); out[k] = el ? el.value : ""; });
+        return out;
     }
 
     // 検索している間は「検索」「クリア」を止め、Enter も受けない（結果が混ざらないように。終わるまで待ってもらう）
@@ -717,6 +863,7 @@
         $("results").innerHTML = "";
         var res;
         try {
+            state.crit = b.crit;
             res = await runSearch(b.crit);
         } catch (e) {
             if (seq !== state.seq) return;
@@ -790,7 +937,8 @@
             cols.map(function (col) { return "<th scope='col' data-col='" + esc(col.key) + "'>" + esc(col.label) + "</th>"; }).join("") +
             "</tr></thead><tbody>";
         p.carTable.forEach(function (car) {
-            var href = state.tabBase ? state.tabBase + encodeURIComponent(car.module) + "/" + encodeURIComponent(car.id) : "";
+            // 画面の URL はモジュールの内部名（config の tabModule。JUMPS は CustomModule13）。api_name（JUMPS）では開けない
+            var href = state.tabBase ? state.tabBase + encodeURIComponent(car.tab || car.module) + "/" + encodeURIComponent(car.id) : "";
             var link = href ? "<a class='car-link' href='" + esc(href) + "' target='_blank' rel='noopener'>"
                 : "<a class='car-link' href='#' data-open='" + esc(car.id) + "' data-entity='" + esc(car.module) + "'>";
             h += "<tr class='car-row" + (car.hit ? " hit" : "") + "' title='この車両を開く'>" + cols.map(function (col, i) {
@@ -820,7 +968,7 @@
     }
     function clearAll() {
         if (state.busy) return;    // 検索している間はクリアしない（ボタンも止めてある）
-        ["q-name", "q-kana", "q-phone", "q-no", "q-plate", "q-vin"].forEach(function (id) { $(id).value = ""; });
+        KIND_ORDER.forEach(function (k) { var el = $(INPUT_IDS[k]); if (el) el.value = ""; });
         setNotice("", "");
         $("status").textContent = "";
         $("results").innerHTML = "";
@@ -908,7 +1056,7 @@
         // ホスト名が zoho.{com,jp,...} そのものか、そのサブドメイン（crm.zoho.com・crmplus.zoho.com・crmsandbox.zoho.com など）のときだけ使う
         var origin = /^https:\/\/([a-z0-9-]+\.)*zoho\.(com|jp|eu|in|com\.au|com\.cn|ca|sa)$/i.test(parent) ? parent : CFG.crmOrigin;
         state.tabBase = domain ? origin + "/crm/" + domain + "/tab/" : "";
-        state.recordBase = state.tabBase ? state.tabBase + C().module + "/" : "";
+        state.recordBase = state.tabBase ? state.tabBase + (C().tabModule || C().module) + "/" : "";
     }
 
     // 入力欄の Enter はフォームの submit で検索になる

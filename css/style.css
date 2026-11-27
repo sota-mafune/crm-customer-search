@@ -30,6 +30,7 @@ body {
 }
 .f input:focus { outline: 2px solid #4a7bd0; border-color: #4a7bd0; }
 .actions { grid-column: 1 / -1; display: flex; gap: 10px; }
+.form-sub { grid-column: 1 / -1; font-size: 14px; color: #555; border-top: 1px dashed #c5ccd6; padding-top: 8px; }
 .btn-main, .btn-sub { font-size: 16px; padding: 8px 22px; border-radius: 6px; cursor: pointer; }
 .btn-main { background: #1f3864; color: #fff; border: 1px solid #1f3864; font-weight: bold; }
 .btn-main:disabled { opacity: .55; cursor: default; }
@@ -90,7 +91,8 @@ a.row:focus { outline: 2px solid #4a7bd0; }
 
 .badge { display: inline-block; font-size: 13px; padding: 1px 8px; border-radius: 10px; margin: 0 4px 4px 0; background: #e0e8f6; color: #1f3864; border: 1px solid #9fb4d8; white-space: nowrap; }
 .b-phone, .b-no { background: #e3f4e5; border-color: #8cc79a; color: #1b5e20; }
-.b-plate, .b-vin { background: #fdeede; border-color: #e3a86a; color: #7a3d00; }
+.b-plate, .b-vin, .b-seiri { background: #fdeede; border-color: #e3a86a; color: #7a3d00; }
+.b-model, .b-staff, .b-office { background: #f1eafa; border-color: #b9a2dc; color: #4a2a7a; }
 
 @media (max-width: 699px) {
     .form { grid-template-columns: 1fr; }

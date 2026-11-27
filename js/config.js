@@ -31,7 +31,12 @@ var CUSTOMER_SEARCH_CONFIG = {
             key: "ittou",
             label: "一等書記官",
             module: "CustomModule10",
+            // 画面の URL（{入口}/crm/{組織}/tab/{tabModule}/{id}）に使うモジュールの内部名。api_name とは違うことがある（設定のモジュールの module_name）
+            tabModule: "CustomModule10",
             nameField: "Name",           // 車名
+            // 絞り込みの欄（ほかの欄の結果を、この条件の車を持つお客様だけにする）。この車両に無い項目は書かない
+            modelField: "Name",          // 車種名（部分一致）
+            staffField: "field40",       // 担当者コード（営業担当コード。担当者の社員番号と同じ番号）
             contactField: "field11",     // 顧客データ（Contacts への参照）
             // 登録番号は1つの文字（地名・分類番号・かな・一連番号を半角空白で区切る）。一連番号は plateNumber に別に入っている
             plateFull: "field14",
@@ -49,7 +54,12 @@ var CUSTOMER_SEARCH_CONFIG = {
             key: "jumps",
             label: "JUMPS",
             module: "JUMPS",
+            tabModule: "CustomModule13", // api_name は JUMPS だが、画面の URL は内部名（CustomModule13）でないと開けない
             nameField: "Name",
+            seiriField: "NO1",           // 整理NO（数字。完全一致で探す）
+            modelField: "Name",          // 車種名（部分一致）
+            staffField: "field201",      // 担当者コード（販売担当者コード）
+            officeField: "field200",     // 営業所コード
             contactField: "field120",
             // 登録番号が4つに分かれている（１=地名 ２=分類番号 ３=かな ４=一連番号）
             plateParts: ["field108", "field111", "field114", "field118"],
@@ -84,6 +94,8 @@ var CUSTOMER_SEARCH_CONFIG = {
     contactScanMax: 400,     // 1つの問い合わせで読む連絡先の上限（200 件ずつ）。超えたら「多すぎる」と知らせる
     vehicleScanMax: 1000,    // 1つの欄で読む車両の上限（モジュールごと）
     carScanMax: 1000,        // 出すお客様の「持っている車」を読む上限（モジュールごと・50 人ずつの1本あたり）
+    filterScanMax: 400,      // 絞り込みの欄をほかの欄と一緒に入れたとき、車を読んで確かめるお客様の上限（超えたら先頭だけ確かめて知らせる）
+    modelMinLen: 2,          // 車種名は 2 文字以上で探す
     inMax: 50,               // COQL の in に並べる数の上限（実測: 51 で LIMIT_EXCEEDED）
     parallel: 3,             // 同時に流す COQL の本数（4 本で頭打ちの実測がある）
     vinMinLen: 4,            // 車台番号は 4 文字以上で探す
