@@ -250,7 +250,7 @@
         }
         if (String(raw.plate || "").trim()) {
             var pk = plateKey(raw.plate), m = /([0-9]{1,4})$/.exec(pk);
-            if (!m) errors.push("ナンバーは一連番号（末尾の 1〜4 桁の数字）まで入れてください（例: 1234 か 練馬500あ1234）。");
+            if (!m) errors.push("ナンバーは一連番号（末尾の 1〜4 桁の数字）まで入れてください（例: 1234 か 水戸500あ1234）。");
             else if (/^[0-9]{5,}$/.test(pk)) errors.push("ナンバーの一連番号は 4 桁までです（例: 1234）。");
             else crit.plate = { number: String(parseInt(m[1], 10)), key: pk, onlyNumber: pk === String(parseInt(m[1], 10)) };
         }
